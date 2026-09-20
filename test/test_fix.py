@@ -70,9 +70,17 @@ def test_export_fixes_parity(tmp_path: pathlib.Path):
         assert isinstance(msg["FilePath"], str)
         return (msg["FileOffset"], msg["FilePath"])
 
+    def strip_build_dir(diags: list) -> list:
+        # BuildDirectory intentionally differs: clang-tidy uses CWD when no
+        # compile_commands.json is present; clangd-tidy always uses the source
+        # file's parent directory. Strip it so the comparison focuses on fix data.
+        return [{k: v for k, v in d.items() if k != "BuildDirectory"} for d in diags]
+
     clang_tidy_fixes["Diagnostics"].sort(key=get_sort_key)
     clangd_tidy_fixes_generated["Diagnostics"].sort(key=get_sort_key)
-    assert clang_tidy_fixes["Diagnostics"] == clangd_tidy_fixes_generated["Diagnostics"]
+    assert strip_build_dir(clang_tidy_fixes["Diagnostics"]) == strip_build_dir(
+        clangd_tidy_fixes_generated["Diagnostics"]
+    )
 
 
 def test_fix_it_from_different_directory(tmp_path: pathlib.Path):

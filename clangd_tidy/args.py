@@ -114,6 +114,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     output_group.add_argument(
+        "--stream",
+        action="store_true",
+        help=(
+            "Stream diagnostics per-file in compact format as each file completes, "
+            "flushing stdout immediately. Implies compact output. "
+            "Useful when running as a subprocess where the caller reads output line-by-line."
+        ),
+    )
+    output_group.add_argument(
         "--tqdm", action="store_true", help="Show a progress bar (tqdm required)."
     )
     output_group.add_argument(

@@ -96,7 +96,7 @@ def _position_to_offset(line_offsets: List[int], position: Position) -> int:
 
 
 def create_replacements(
-    edits: List[Tuple[Diagnostic, WorkspaceEdit]],
+    edits: List[Tuple[pathlib.Path, Diagnostic, WorkspaceEdit]],
 ) -> List[ClangApplyReplacementsDiagnostic]:
     """Create a list of replacements from the given edits.
 
@@ -107,14 +107,14 @@ def create_replacements(
     - Diagnostic grouping (all edits from one diagnostic share MainSourceFile)
 
     Args:
-        edits: List of (Diagnostic, WorkspaceEdit) pairs to convert
+        edits: List of (source_path, Diagnostic, WorkspaceEdit) triples to convert
 
     Returns:
         List of replacement dictionaries in clang-apply-replacements format
     """
     all_replacements: List[ClangApplyReplacementsDiagnostic] = []
 
-    for diag, edit in edits:
+    for source_path, diag, edit in edits:
         if not edit.changes:
             continue
 
@@ -166,6 +166,7 @@ def create_replacements(
         if severity == "Hint":
             severity = "Warning"
 
+        build_dir = str(source_path.resolve().parent)
         all_replacements.append(
             ClangApplyReplacementsDiagnostic(
                 DiagnosticName=diag.code,
@@ -176,7 +177,7 @@ def create_replacements(
                     Replacements=replacements,
                 ),
                 Level=severity,
-                BuildDirectory=str(first_path.parent) if first_path else "",
+                BuildDirectory=build_dir,
             )
         )
     return all_replacements

@@ -250,7 +250,7 @@ class ClangdRunner:
 
     async def export_fixes(
         self,
-        edits: List[Tuple[Diagnostic, WorkspaceEdit]],
+        edits: List[Tuple[pathlib.Path, Diagnostic, WorkspaceEdit]],
         output_path: pathlib.Path,
     ) -> None:
         """Export the given edits to a YAML file."""
@@ -260,13 +260,8 @@ class ClangdRunner:
 
         main_source_file = ""
         if edits:
-            # Find the first edit with changes to determine the main source file
-            for _, edit in edits:
-                if edit.changes:
-                    first_uri = next(iter(edit.changes.keys()), None)
-                    if first_uri:
-                        main_source_file = str(uri_to_path(first_uri))
-                        break
+            # Use the source path of the first edit as the main source file
+            main_source_file = str(edits[0][0].resolve())
 
         with open(output_path, "w") as f:
             logging.debug(f"Exporting fixes to {output_path}")
@@ -279,7 +274,7 @@ class ClangdRunner:
             logging.debug(f"Fixes: \n{fixes}")
             f.write(fixes)
 
-    async def apply_fixes(self, edits: List[Tuple[Diagnostic, WorkspaceEdit]]) -> None:
+    async def apply_fixes(self, edits: List[Tuple[pathlib.Path, Diagnostic, WorkspaceEdit]]) -> None:
         """Apply the given edits to the files."""
         all_replacements = create_replacements(edits)
         if not all_replacements:
@@ -332,7 +327,9 @@ class ClangdRunner:
 
     async def collect_analysis(
         self,
-    ) -> Tuple[DiagnosticCollection, List[Tuple[Diagnostic, WorkspaceEdit]]]:
+        stream: bool = False,
+    ) -> Tuple[DiagnosticCollection, List[Tuple[pathlib.Path, Diagnostic, WorkspaceEdit]]]:
+        _streamed: set[pathlib.Path] = set()
 
         try:
             while True:
@@ -348,6 +345,36 @@ class ClangdRunner:
                     [*self._system_tasks.values(), *flow_futures],
                     return_when=asyncio.FIRST_COMPLETED,
                 )
+
+                # Stream per-file diagnostics in clang-tidy compatible format as
+                # each file's diagnostics future completes, so callers can parse
+                # output line-by-line without waiting for all files.
+                if stream:
+                    for key, future in self._diagnostics_flow._futures.items():
+                        match key:
+                            case (pathlib.Path() as path, "diagnostics"):
+                                if future.done() and path not in _streamed:
+                                    _streamed.add(path)
+                                    try:
+                                        for diag in future.result():
+                                            sev = (
+                                                diag.severity.name.lower()
+                                                if diag.severity
+                                                else "warning"
+                                            )
+                                            line = diag.range.start.line + 1
+                                            col = diag.range.start.character + 1
+                                            rule = (
+                                                f" [{diag.code}]"
+                                                if diag.code
+                                                else ""
+                                            )
+                                            print(
+                                                f"{path}:{line}:{col}: {sev}: {diag.message}{rule}",
+                                                flush=True,
+                                            )
+                                    except Exception:
+                                        pass
 
                 done_system_tasks = [
                     system_task
@@ -390,7 +417,7 @@ class ClangdRunner:
         finally:
             self._pbar.close()
 
-        edits: List[Tuple[Diagnostic, WorkspaceEdit]] = (
+        edits: List[Tuple[pathlib.Path, Diagnostic, WorkspaceEdit]] = (
             self._diagnostics_flow.get_edits()
             if isinstance(self._diagnostics_flow, DiagnosticsWithFixesFlow)
             else []
@@ -518,9 +545,10 @@ async def main_cli_async() -> int:
     return_code = 0
     try:
         async with runner:
-            file_diagnostics, edits = await runner.collect_analysis()
-            # Always print diagnostics (unless in quiet mode or similar)
-            _print_diagnostics(file_diagnostics, args)
+            file_diagnostics, edits = await runner.collect_analysis(stream=args.stream)
+            # In stream mode diagnostics were already printed per-file; skip batch print.
+            if not args.stream:
+                _print_diagnostics(file_diagnostics, args)
 
             # Handle export-fixes mode
             if args.export_fixes:

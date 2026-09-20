@@ -315,9 +315,9 @@ class DiagnosticsWithFixesFlow(DiagnosticsFlow):
             )
             raise
 
-    def get_edits(self) -> List[Tuple[Diagnostic, WorkspaceEdit]]:
+    def get_edits(self) -> List[Tuple[pathlib.Path, Diagnostic, WorkspaceEdit]]:
         """Get all collected edits from completed file flows."""
-        results: List[Tuple[Diagnostic, WorkspaceEdit]] = []
+        results: List[Tuple[pathlib.Path, Diagnostic, WorkspaceEdit]] = []
         for key, future in self._futures.items():
             # From all the futures, extract only the fix command futures and return their diagnostics/edits
             match key:
@@ -329,7 +329,7 @@ class DiagnosticsWithFixesFlow(DiagnosticsFlow):
                     result = future.result()
                     if isinstance(result, RejectedEdit):
                         continue
-                    results.append((diag, result))
+                    results.append((path, diag, result))
                 case _:
                     continue
         return results
