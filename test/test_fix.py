@@ -3,6 +3,7 @@ Test suite for clangd-tidy --fix and --export-fixes features.
 """
 
 import pathlib
+import re
 import shutil
 import subprocess
 import yaml
@@ -184,3 +185,79 @@ def test_utf8_encoding(tmp_path: pathlib.Path):
     run_clangd_tidy(["--verbose", "--fix", "-p", str(test_dir), str(test_file)])
 
     assert_file_matches_expected(test_file, expected_file)
+
+
+def test_fixes_available_plural_all_selectable(tmp_path: pathlib.Path):
+    """Every unused-include warning must be fixable even when (fixes available) is plural.
+
+    When a file has N unused includes clangd reports each as "(fixes available)"
+    (plural) because it also offers a batch action. The filter must match the
+    plural form so each diagnostic gets a code action and appears in the YAML.
+    """
+    test_dir = copy_fixture_directory("unused_includes_multi", tmp_path, make_paths_absolute=True)
+    test_file = test_dir / "test_fix.cpp"
+    fixes_path = tmp_path / "fixes.yaml"
+
+    result = run_clangd_tidy(
+        ["--stream", "--export-fixes", str(fixes_path), str(test_file)]
+    )
+
+    # Both includes must appear in stream output (suffix stripped to match clang-tidy format)
+    assert result.stdout.count("unused-includes") == 2, (
+        f"Expected 2 unused-includes lines in stream output, got:\n{result.stdout}"
+    )
+    assert "fixes available" not in result.stdout, (
+        f"(fixes available) suffix must be stripped from stream output"
+    )
+
+    assert fixes_path.exists(), "--export-fixes produced no YAML"
+    data = yaml.safe_load(fixes_path.read_text()) or {}
+    diags = data.get("Diagnostics", [])
+
+    # Both must have YAML entries with non-empty replacements
+    assert len(diags) == 2, f"Expected 2 diagnostics in YAML, got {len(diags)}"
+    for d in diags:
+        assert d["DiagnosticName"] == "unused-includes"
+        repls = d["DiagnosticMessage"].get("Replacements", [])
+        assert len(repls) > 0, f"Diagnostic has no replacements: {d}"
+
+
+def test_stream_yaml_line_consistency(tmp_path: pathlib.Path):
+    """Stream output line numbers must equal the line derived from YAML FileOffset.
+
+    For rules where the first replacement starts on a different line than the
+    diagnostic (e.g. modernize-use-trailing-return-type with a multi-line
+    function signature), FileOffset must reflect the diagnostic position, not
+    the first replacement's byte offset.
+    """
+    _WARN = re.compile(r"^.+?:(\d+):\d+:\s+\w+:\s+.+\[([^\]]+)\]\s*$")
+
+    test_dir = copy_fixture_directory("trailing_return", tmp_path)
+    test_file = test_dir / "test_fix.cpp"
+    fixes_path = tmp_path / "fixes.yaml"
+
+    result = run_clangd_tidy(
+        ["--stream", "--export-fixes", str(fixes_path), str(test_file)]
+    )
+
+    # Line numbers from stream output keyed by rule name
+    stream_lines: dict[str, int] = {}
+    for line in result.stdout.splitlines():
+        m = _WARN.match(line)
+        if m:
+            stream_lines[m.group(2)] = int(m.group(1))
+
+    assert stream_lines, "No diagnostics in --stream output"
+    assert fixes_path.exists(), "--export-fixes produced no YAML"
+
+    raw = test_file.read_bytes()
+    data = yaml.safe_load(fixes_path.read_text()) or {}
+    for diag in data.get("Diagnostics", []):
+        rule = diag["DiagnosticName"]
+        offset = diag["DiagnosticMessage"]["FileOffset"]
+        yaml_line = raw[:offset].count(b"\n") + 1
+        assert rule in stream_lines, f"{rule} in YAML but not in stream output"
+        assert yaml_line == stream_lines[rule], (
+            f"{rule}: stream says line {stream_lines[rule]}, "
+            f"YAML FileOffset maps to line {yaml_line}"
+        )

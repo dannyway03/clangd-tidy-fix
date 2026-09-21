@@ -197,11 +197,15 @@ class ClangdAsync:
             )
 
         if len(fix_actions) > 1:
-            titles = [a.title for a in fix_actions]
-            raise RuntimeError(
-                f"Expected exactly 1 fix action, got {len(fix_actions)} for: {diag_message}\n"
-                f"Actions: {titles}"
-            )
+            # Multiple actions exist (e.g. "remove #include directive" + "remove all unused includes").
+            # Pick the most targeted one: fewest total edits = smallest scope fix.
+            def _edit_count(action: CodeAction) -> int:
+                if not action.edit or not action.edit.changes:
+                    return 0
+                return sum(len(edits) for edits in action.edit.changes.values())
+
+            fix_actions = [min(fix_actions, key=_edit_count)]
+            logging.debug(f"Multiple actions, selected most targeted: {fix_actions[0].title}")
 
         logging.debug(f"Selected: {fix_actions[0].title}")
         return fix_actions[0]

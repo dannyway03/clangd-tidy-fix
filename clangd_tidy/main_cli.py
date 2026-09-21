@@ -369,8 +369,13 @@ class ClangdRunner:
                                                 if diag.code
                                                 else ""
                                             )
+                                            message = (
+                                                diag.message
+                                                .replace(" (fixes available)", "")
+                                                .replace(" (fix available)", "")
+                                            )
                                             print(
-                                                f"{path}:{line}:{col}: {sev}: {diag.message}{rule}",
+                                                f"{path}:{line}:{col}: {sev}: {message}{rule}",
                                                 flush=True,
                                             )
                                     except Exception:

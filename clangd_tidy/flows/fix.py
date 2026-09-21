@@ -154,14 +154,17 @@ class DiagnosticsWithFixesFlow(DiagnosticsFlow):
         diagnostics = await self._open_and_get_diagnostics(path)
 
         # Process all diagnostics with available fixes concurrently.
-        # Note that diagnostics can contain multiple fixes, in which case the suffix
-        # would be "(fixes available)". Since for these the user must pick one fix among
-        # several, we currently do not attempt to auto-apply them.
+        # Match both "(fix available)" and "(fixes available)": the plural form appears
+        # when a file has multiple fixable diagnostics of the same kind (e.g. N unused
+        # includes), because clangd also offers a batch action alongside each individual
+        # fix. The substring "fix available" matches both forms.
         # We might have also received diag.codeActions for some diagnostics. However,
         # these inline codeActions do not handle cross-file fixes, so we always request
         # fresh code actions from clangd instead to ensure we get complete fixes.
         diags_with_fixes = [
-            diag for diag in diagnostics if "(fix available)" in diag.message
+            diag for diag in diagnostics
+            if "(fix available)" in diag.message
+            or "(fixes available)" in diag.message
         ]
 
         logging.debug(

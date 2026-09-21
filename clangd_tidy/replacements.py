@@ -120,8 +120,6 @@ def create_replacements(
 
         # Collect replacements across all files for this diagnostic
         replacements: List[Replacement] = []
-        first_path = None
-        first_offset = None
 
         for uri, text_edits in edit.changes.items():
             path = uri_to_path(uri)
@@ -144,18 +142,19 @@ def create_replacements(
                     )
                 )
 
-                # Track first file and offset for diagnostic header
-                # clang-apply-replacements format requires each diagnostic to have:
-                # - MainSourceFile: where the diagnostic was reported
-                # - FileOffset: byte position in that file
-                # This is used for grouping/sorting diagnostics in output
-                if first_path is None:
-                    first_path = path
-                    first_offset = start_offset
+        # DiagnosticMessage.FilePath and FileOffset identify WHERE the diagnostic was
+        # reported, not where the first replacement starts. Using the diagnostic
+        # position ensures the FileOffset line matches the line emitted by --stream
+        # (diag.range.start.line + 1), enabling correct YAML key lookup in consumers.
+        diag_line_offsets = _get_line_offsets(source_path)
+        if diag_line_offsets is not None:
+            diag_offset = _position_to_offset(diag_line_offsets, diag.range.start)
+        else:
+            diag_offset = replacements[0].Offset if replacements else 0
 
-        # Transform diagnostic message for clang-apply-replacements format
-        # Remove clangd's " (fix available)" suffix
-        message = diag.message.replace(" (fix available)", "")
+        # Strip clangd's file-level annotation suffixes — these are UI hints
+        # not part of the diagnostic message itself.
+        message = diag.message.replace(" (fixes available)", "").replace(" (fix available)", "")
         # Convert first letter to lowercase (clang-tidy convention)
         if message and message[0].isupper():
             message = message[0].lower() + message[1:]
@@ -172,8 +171,8 @@ def create_replacements(
                 DiagnosticName=diag.code,
                 DiagnosticMessage=DiagnosticMessage(
                     Message=message,
-                    FilePath=str(first_path) if first_path else "",
-                    FileOffset=first_offset if first_offset is not None else 0,
+                    FilePath=str(source_path),
+                    FileOffset=diag_offset,
                     Replacements=replacements,
                 ),
                 Level=severity,

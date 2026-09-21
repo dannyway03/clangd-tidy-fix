@@ -1,0 +1,7 @@
+[
+  {
+    "directory": ".",
+    "command": "c++ -std=c++17 -c test_fix.cpp",
+    "file": "test_fix.cpp"
+  }
+]
