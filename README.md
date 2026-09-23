@@ -61,8 +61,8 @@ usage: clangd-tidy [--allow-extensions ALLOW_EXTENSIONS]
                    [--fail-on-severity SEVERITY] [-f] [--fix]
                    [--format-style <string>] [--export-fixes EXPORT_FIXES]
                    [--clang-apply-replacements-executable CLANG_APPLY_REPLACEMENTS_EXECUTABLE]
-                   [-o OUTPUT] [--line-filter LINE_FILTER] [--tqdm] [--github]
-                   [--git-root GIT_ROOT] [-c] [--context CONTEXT]
+                   [-o OUTPUT] [--line-filter LINE_FILTER] [--stream] [--tqdm]
+                   [--github] [--git-root GIT_ROOT] [-c] [--context CONTEXT]
                    [--color {auto,always,never}] [-v]
                    [-p COMPILE_COMMANDS_DIR] [-j JOBS]
                    [--clangd-executable CLANGD_EXECUTABLE]
@@ -112,6 +112,12 @@ output options:
                         A JSON with a list of files and line ranges that will
                         act as a filter for diagnostics. Compatible with
                         clang-tidy --line-filter parameter format.
+  --stream              Stream diagnostics per-file to stdout in clang-tidy
+                        compatible format (path:line:col: severity: message
+                        [rule]) flushed immediately as each file completes.
+                        Also emits a __FILE_DONE__:<path> marker after each
+                        file for progress tracking. Incompatible with
+                        -o/--output.
   --tqdm                Show a progress bar (tqdm required).
   --github              Append workflow commands for GitHub Actions to output.
   --git-root GIT_ROOT   Specifies the root directory of the Git repository.
@@ -177,6 +183,45 @@ Example usage with git:
 
 ```
 
+## Streaming Mode
+
+When `--stream` is specified, clangd-tidy emits diagnostics to stdout in
+clang-tidy compatible format as each file completes, rather than buffering
+all output until the end:
+
+```
+path/to/file.cpp:12:5: warning: message [rule-name]
+path/to/header.hpp:34:1: warning: another message [rule-name]
+```
+
+This makes `clangd-tidy --stream` suitable for use as a subprocess whose
+stdout is read line-by-line in real time (e.g. a TUI or CI pipeline that
+shows live progress).
+
+### Per-file completion marker
+
+After flushing all diagnostics for a file, `--stream` prints:
+
+```
+__FILE_DONE__:/absolute/path/to/file
+```
+
+This marker signals that every diagnostic for that file has been written.
+Consumers can use it to track per-file scan progress without waiting for the
+full run to complete.
+
+### Combining `--stream` with `--export-fixes`
+
+`--stream` can be combined with `--export-fixes` to simultaneously stream
+diagnostics and write a fixes YAML file:
+
+```bash
+clangd-tidy --stream --export-fixes fixes.yaml src/my_file.cpp
+```
+
+Diagnostics stream to stdout as each file finishes; the YAML is written once
+the full scan completes.
+
 ## Applying Fixes
 
 `clangd-tidy` can automatically apply the suggested fixes for diagnostics.
@@ -203,8 +248,15 @@ Alternatively, you can export the fixes to a YAML file, which can be applied lat
 
 ```bash
 clangd-tidy --export-fixes fixes.yaml your_source_file.cpp
-clang-apply-replacements . < fixes.yaml
+clang-apply-replacements .
 ```
+
+The exported YAML is compatible with `clang-apply-replacements` format. Key properties:
+
+- **`FileOffset`** is the byte offset of the diagnostic position (not the first replacement), matching clang-tidy's convention and ensuring correct line attribution for rules where the diagnostic and its first edit are on different lines (e.g. `modernize-use-trailing-return-type`).
+- **`FilePath`** is the file where the diagnostic was reported.
+- **`Message`** has clangd's UI annotation suffixes (`(fix available)`, `(fixes available)`) stripped to match clang-tidy's YAML format.
+- All paths in the YAML are **absolute**.
 
 **Note:** When using `--fix` or `--export-fixes`, cross-file fixes may be missed for files not in the compilation database. Make sure all source files in your project are listed in the compilation database to avoid this issue. This is a limitation of clangd.
 
