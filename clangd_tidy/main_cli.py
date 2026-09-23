@@ -380,6 +380,7 @@ class ClangdRunner:
                                             )
                                     except Exception:
                                         pass
+                                    print(f"__FILE_DONE__:{path}", flush=True)
 
                 done_system_tasks = [
                     system_task
